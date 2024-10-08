@@ -144,16 +144,152 @@ JOIN
     longest_project lp ON p.project_id = lp.project_id;
 
 
+
 -- 8. Calculate the percentage of each department's salary compared to the total salary of the company.
 
-
+WITH total_salary AS (
+    SELECT SUM(salary) as company_total
+    FROM employees
+)
+SELECT 
+    department,
+    SUM(salary) as dept_total,
+    (SUM(salary) * 100.0 / (SELECT company_total FROM total_salary)) as percentage
+FROM 
+    employees
+GROUP BY 
+    department
+ORDER BY 
+    percentage DESC;
 
 -- 9. Identify employees who have a higher salary than their department's average, and show by what percentage their salary exceeds the average.
 
+WITH dept_avg_salaries AS (
+    SELECT 
+        department,
+        AVG(salary) as avg_salary
+    FROM 
+        employees
+    GROUP BY 
+        department
+)
+SELECT 
+    e.employee_id,
+    e.first_name,
+    e.last_name,
+    e.department,
+    e.salary,
+    das.avg_salary,
+    ((e.salary - das.avg_salary) * 100.0 / das.avg_salary) as percent_above_avg
+FROM 
+    employees e
+JOIN 
+    dept_avg_salaries das ON e.department = das.department
+WHERE 
+    e.salary > das.avg_salary
+ORDER BY 
+    percent_above_avg DESC;
+
+
 -- 10. Create a query that shows a hierarchical view of employees and their projects, with multiple levels of projects if an employee is in more than one.
+WITH RECURSIVE employee_projects_hierarchy AS (
+    SELECT 
+        e.employee_id,
+        e.first_name,
+        e.last_name,
+        p.project_id,
+        p.project_name,
+        ep.role,
+        1 AS level,
+        CAST(p.project_name AS CHAR(1000)) AS project_path
+    FROM 
+        employees e
+    JOIN 
+        employee_projects ep ON e.employee_id = ep.employee_id
+    JOIN 
+        projects p ON ep.project_id = p.project_id
+    UNION ALL
+    SELECT 
+        e.employee_id,
+        e.first_name,
+        e.last_name,
+        p.project_id,
+        p.project_name,
+        ep.role,
+        eph.level + 1,
+        CONCAT(eph.project_path, ' > ', p.project_name) AS project_path
+    FROM 
+        employees e
+    JOIN 
+        employee_projects ep ON e.employee_id = ep.employee_id
+    JOIN 
+        projects p ON ep.project_id = p.project_id
+    JOIN 
+        employee_projects_hierarchy eph ON e.employee_id = eph.employee_id
+    WHERE 
+        p.project_id > eph.project_id
+)
+SELECT 
+    employee_id,
+    first_name,
+    last_name,
+    project_id,
+    project_name,
+    role,
+    level,
+    project_path
+FROM 
+    employee_projects_hierarchy
+ORDER BY 
+    employee_id, level, project_id;
 
-
+-- Explanation:
+-- 1. We use a recursive CTE to build the hierarchy of projects for each employee.
+-- 2. The base case of the recursion selects all employee-project combinations.
+-- 3. The recursive part joins this with additional projects for the same employee.
+-- 4. We build a project_path string to show the hierarchy of projects.
+-- 5. The level column keeps track of how deep in the hierarchy each row is.
+-- 6. The final SELECT orders the results to group projects by employee and level.
 
 -- Bonus Challenge:
--- 11. Implement a query to find the "Kevin Bacon Number" equivalent for projects. 
---     (i.e., for each pair of employees, find the shortest connection through shared projects)
+-- 11. Implement a query to find the "Kevin Bacon Number" equivalent for projects.
+WITH RECURSIVE project_connections AS (
+    -- Base case: direct connections
+    SELECT 
+        ep1.employee_id as employee1,
+        ep2.employee_id as employee2,
+        1 as connection_level
+    FROM 
+        employee_projects ep1
+    JOIN 
+        employee_projects ep2 ON ep1.project_id = ep2.project_id AND ep1.employee_id < ep2.employee_id
+    
+    UNION
+    
+    -- Recursive case: indirect connections
+    SELECT 
+        pc.employee1,
+        ep.employee_id as employee2,
+        pc.connection_level + 1
+    FROM 
+        project_connections pc
+    JOIN 
+        employee_projects ep ON pc.employee2 = ep.employee_id
+    WHERE 
+        pc.employee1 < ep.employee_id AND pc.connection_level < 6
+)
+SELECT 
+    e1.first_name || ' ' || e1.last_name as employee1,
+    e2.first_name || ' ' || e2.last_name as employee2,
+    MIN(connection_level) as shortest_connection
+FROM 
+    project_connections pc
+JOIN 
+    employees e1 ON pc.employee1 = e1.employee_id
+JOIN 
+    employees e2 ON pc.employee2 = e2.employee_id
+GROUP BY 
+    e1.employee_id, e1.first_name, e1.last_name,
+    e2.employee_id, e2.first_name, e2.last_name
+ORDER BY 
+    e1.last_name, e1.first_name, shortest_connection
